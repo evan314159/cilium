@@ -1917,6 +1917,10 @@ ipv6_policy(struct __ctx_buff *ctx, struct ipv6hdr *ip6, __u32 src_label,
 					   ipfrag_has_l4_header(fraginfo), CT_INGRESS);
 			if (IS_ERR(ret2))
 				return ret2;
+
+			/* PROBE ONLY */
+			ctx->tc_index |= TC_INDEX_F_PROBE;
+			cilium_dbg(ctx, DBG_GENERIC, 0xBEEF0001, ctx->tc_index);
 		}
 
 		/* proxy_port remains 0 in this case */
@@ -2634,6 +2638,8 @@ int cil_to_container(struct __ctx_buff *ctx)
 	}
 
 	bpf_clear_meta(ctx);
+	/* PROBE ONLY: report tc_index as seen on entry, before anything clears it. */
+	cilium_dbg(ctx, DBG_GENERIC, 0xBEEF0002, ctx->tc_index);
 	check_and_store_ip_trace_id(ctx);
 
 #if defined(ENABLE_L7_LB)

@@ -280,6 +280,8 @@ enum metric_dir {
 #define TC_INDEX_F_SKIP_NODEPORT	4
 #define TC_INDEX_F_SKIP_HEALTH_CHECK	8
 #define TC_INDEX_F_SKIP_HOST_FIREWALL	16
+/* PROBE ONLY: does tc_index survive delivery -> host stack -> cil_to_container? */
+#define TC_INDEX_F_PROBE		32
 
 #define CB_DELIVERY_FLAGS_REDIRECT		(1 << 0)
 #define CB_DELIVERY_FLAGS_FROM_HOST		(1 << 1)
