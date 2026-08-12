@@ -120,6 +120,21 @@ ctx_skip_host_fw(struct __sk_buff *ctx)
 }
 #endif /* ENABLE_HOST_FIREWALL */
 
+static __always_inline __maybe_unused void
+ctx_svc_reply_done_set(struct __sk_buff *ctx)
+{
+	ctx->tc_index |= TC_INDEX_F_SVC_REPLY_DONE;
+}
+
+static __always_inline __maybe_unused bool
+ctx_svc_reply_done(struct __sk_buff *ctx)
+{
+	volatile __u32 tc_index = ctx->tc_index;
+
+	ctx->tc_index &= ~TC_INDEX_F_SVC_REPLY_DONE;
+	return tc_index & TC_INDEX_F_SVC_REPLY_DONE;
+}
+
 static __always_inline __maybe_unused __u32 ctx_get_xfer(struct __sk_buff *ctx,
 							 __u32 off)
 {

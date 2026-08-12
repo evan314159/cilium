@@ -1917,6 +1917,10 @@ ipv6_policy(struct __ctx_buff *ctx, struct ipv6hdr *ip6, __u32 src_label,
 					   ipfrag_has_l4_header(fraginfo), CT_INGRESS);
 			if (IS_ERR(ret2))
 				return ret2;
+
+#if defined(ENABLE_PER_PACKET_LB)
+			ctx_svc_reply_done_set(ctx);
+#endif
 		}
 
 		/* proxy_port remains 0 in this case */
@@ -2230,6 +2234,10 @@ ipv4_policy(struct __ctx_buff *ctx, struct iphdr *ip4, __u32 src_label,
 					   ipfrag_has_l4_header(fraginfo));
 			if (IS_ERR(ret2))
 				return ret2;
+
+#if defined(ENABLE_PER_PACKET_LB)
+			ctx_svc_reply_done_set(ctx);
+#endif
 		}
 
 		/* proxy_port remains 0 in this case */
@@ -2654,6 +2662,14 @@ int cil_to_container(struct __ctx_buff *ctx)
 	send_trace_notify(ctx, trace, identity, sec_label, LXC_ID,
 			  ctx->ingress_ifindex, TRACE_REASON_UNKNOWN,
 			  TRACE_PAYLOAD_LEN, proto);
+
+	/* A service reply that was already CT-matched and reverse NATed on its
+	 * way in. Its source is now the service address, which no longer matches
+	 * the CT entry keyed on the backend, so re-running the ingress path here
+	 * would classify an established connection as a new flow.
+	 */
+	if (ctx_svc_reply_done(ctx))
+		return CTX_ACT_OK;
 
 #if defined(ENABLE_HOST_FIREWALL) && !defined(ENABLE_ROUTING)
 	/* If the packet comes from the hostns and per-endpoint routes are enabled,
