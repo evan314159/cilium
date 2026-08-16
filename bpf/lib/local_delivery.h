@@ -172,9 +172,19 @@ local_delivery(struct __ctx_buff *ctx, __u32 seclabel, __u32 magic,
 	 * here. A plain redirect() lands on the lxc device, where endpoint routes
 	 * have cil_to_container attached, so it enforces there and we must not
 	 * also tail-call - that would evaluate ingress twice.
+	 *
+	 * Traffic returning from a proxy is the exception. cil_to_container has
+	 * to know not to redirect it back to the proxy, and the only carrier for
+	 * that is CB_DELIVERY_FLAGS, which local_delivery_fill_meta() fills in on
+	 * the tail-call path below. A plain redirect() loses it: the mark is
+	 * rewritten by set_identity_mark() and cb[] does not survive
+	 * bpf_clear_meta() on re-entry. So keep the tail-call for proxy replies,
+	 * and accept the second evaluation there - it is harmless, as the packet
+	 * is not reverse NATed on that path.
 	 */
 	use_redirect_peer = should_redirect_peer(ctx, from_host);
-	if (CONFIG(enable_endpoint_routes) && !use_redirect_peer) {
+	if (CONFIG(enable_endpoint_routes) && !use_redirect_peer &&
+	    !tc_index_from_ingress_proxy(ctx) && !tc_index_from_egress_proxy(ctx)) {
 		set_identity_mark(ctx, seclabel, magic);
 
 # if !defined(ENABLE_NODEPORT)
