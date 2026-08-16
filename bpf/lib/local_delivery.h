@@ -173,18 +173,21 @@ local_delivery(struct __ctx_buff *ctx, __u32 seclabel, __u32 magic,
 	 * have cil_to_container attached, so it enforces there and we must not
 	 * also tail-call - that would evaluate ingress twice.
 	 *
-	 * Traffic returning from a proxy is the exception. cil_to_container has
-	 * to know not to redirect it back to the proxy, and the only carrier for
-	 * that is CB_DELIVERY_FLAGS, which local_delivery_fill_meta() fills in on
-	 * the tail-call path below. A plain redirect() loses it: the mark is
-	 * rewritten by set_identity_mark() and cb[] does not survive
-	 * bpf_clear_meta() on re-entry. So keep the tail-call for proxy replies,
-	 * and accept the second evaluation there - it is harmless, as the packet
-	 * is not reverse NATed on that path.
+	 * The tail-call passes skb->tc_index through, so a packet returning from
+	 * a proxy still carries TC_INDEX_F_FROM_{IN,E}GRESS_PROXY when the
+	 * destination's policy program checks whether to redirect it to the
+	 * proxy again. A redirect() does not: cil_to_container rebuilds tc_index
+	 * from the mark in inherit_identity_from_host(). Carry the proxy origin
+	 * in the mark, as bpf_host already does for the same reason, or the
+	 * reply is sent back to the proxy and the connection hangs.
 	 */
 	use_redirect_peer = should_redirect_peer(ctx, from_host);
-	if (CONFIG(enable_endpoint_routes) && !use_redirect_peer &&
-	    !tc_index_from_ingress_proxy(ctx) && !tc_index_from_egress_proxy(ctx)) {
+	if (CONFIG(enable_endpoint_routes) && !use_redirect_peer) {
+		if (tc_index_from_ingress_proxy(ctx))
+			magic = MARK_MAGIC_PROXY_INGRESS;
+		else if (tc_index_from_egress_proxy(ctx))
+			magic = MARK_MAGIC_PROXY_EGRESS;
+
 		set_identity_mark(ctx, seclabel, magic);
 
 # if !defined(ENABLE_NODEPORT)
