@@ -139,7 +139,7 @@ local_delivery_fill_meta(struct __ctx_buff *ctx, __u32 seclabel,
 static __always_inline int
 local_delivery(struct __ctx_buff *ctx, __u32 seclabel, __u32 magic,
 	       const struct endpoint_info *ep, __u8 direction, bool from_host,
-	       bool from_tunnel, __u32 cluster_id)
+	       bool from_tunnel, bool to_proxy, __u32 cluster_id)
 {
 	bool use_redirect_peer;
 
@@ -167,19 +167,19 @@ local_delivery(struct __ctx_buff *ctx, __u32 seclabel, __u32 magic,
 	 * this case the skb is delivered directly to pod's namespace and the ingress
 	 * policy (the cil_to_container BPF program) is bypassed.
 	 */
+	/* This must stay the inverse of should_redirect_peer(): a redirect_peer()
+	 * lands inside the netns past cil_to_container, so policy has to be
+	 * enforced here, while a plain redirect() lands on the lxc device where
+	 * endpoint routes have cil_to_container attached and it enforces there.
+	 * Doing both evaluates ingress twice.
+	 *
+	 * A proxy-redirected connection is the exception: its reply has to reach
+	 * the proxy's socket, and only ipv{4,6}_policy() does that, via the
+	 * tail-call below. Delivering it into the pod instead leaves the proxy
+	 * waiting for an answer it never gets.
+	 */
 	use_redirect_peer = should_redirect_peer(ctx, from_host);
-	if (CONFIG(enable_endpoint_routes) && !use_redirect_peer &&
-	    /* We need to enforce policies at the source in case of netkit
-	     * devices because we can't redirect to proxy from bpf_lxc. That
-	     * needs a fix upstream. This must stay in sync with the predicate
-	     * in should_redirect_peer(): whenever we fall through to the policy
-	     * tail-call below and then do a plain redirect() into the lxc device
-	     * (should_redirect_peer() == false), endpoint routes would enforce
-	     * ingress policy a second time. On netkit that case is phys/host
-	     * ingress (ingress_ifindex > 0); there we must enforce at the source
-	     * here instead.
-	     */
-	    (!CONFIG(enable_netkit) || ctx_get_ingress_ifindex(ctx) > 0)) {
+	if (CONFIG(enable_endpoint_routes) && !use_redirect_peer && !to_proxy) {
 		set_identity_mark(ctx, seclabel, magic);
 
 # if !defined(ENABLE_NODEPORT)
@@ -214,7 +214,7 @@ static __always_inline int ipv6_local_delivery(struct __ctx_buff *ctx, int l3_of
 					       __u32 seclabel, __u32 magic,
 					       const struct endpoint_info *ep,
 					       __u8 direction, bool from_host,
-					       bool from_tunnel)
+					       bool from_tunnel, bool to_proxy)
 {
 	mac_t router_mac = ep->node_mac;
 	mac_t lxc_mac = ep->mac;
@@ -227,7 +227,7 @@ static __always_inline int ipv6_local_delivery(struct __ctx_buff *ctx, int l3_of
 		return ret;
 
 	return local_delivery(ctx, seclabel, magic, ep, direction, from_host,
-			      from_tunnel, 0);
+			      from_tunnel, to_proxy, 0);
 }
 
 /* Performs IPv4 L2/L3 handling and delivers the packet to the destination pod
@@ -240,7 +240,8 @@ static __always_inline int ipv4_local_delivery(struct __ctx_buff *ctx, int l3_of
 					       struct iphdr *ip4,
 					       const struct endpoint_info *ep,
 					       __u8 direction, bool from_host,
-					       bool from_tunnel, __u32 cluster_id)
+					       bool from_tunnel, bool to_proxy,
+					       __u32 cluster_id)
 {
 	mac_t router_mac = ep->node_mac;
 	mac_t lxc_mac = ep->mac;
@@ -253,7 +254,7 @@ static __always_inline int ipv4_local_delivery(struct __ctx_buff *ctx, int l3_of
 		return ret;
 
 	return local_delivery(ctx, seclabel, magic, ep, direction, from_host,
-			      from_tunnel, cluster_id);
+			      from_tunnel, to_proxy, cluster_id);
 }
 
 /* Performs IPv6 L2/L3 handling and delivers the packet to the cilium_host@ingress

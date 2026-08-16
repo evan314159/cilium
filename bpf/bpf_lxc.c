@@ -757,7 +757,9 @@ ipv6_forward_to_destination(struct __ctx_buff *ctx, struct ipv6hdr *ip6,
 			/* If the packet is from L7 LB it is coming from the host */
 			return ipv6_local_delivery(ctx, ETH_HLEN, SECLABEL_IPV6,
 						   MARK_MAGIC_IDENTITY, ep,
-						   METRIC_EGRESS, from_l7lb, false);
+						   METRIC_EGRESS, from_l7lb, false,
+						   ct_is_proxy_redirect6(get_ct_map6(tuple),
+									 tuple));
 		}
 	}
 
@@ -1258,7 +1260,10 @@ ipv4_forward_to_destination(struct __ctx_buff *ctx, struct iphdr *ip4,
 			return ipv4_local_delivery(ctx, ETH_HLEN, SECLABEL_IPV4,
 						   MARK_MAGIC_IDENTITY, ip4,
 						   ep, METRIC_EGRESS, from_l7lb,
-						   false, 0);
+						   false,
+						   ct_is_proxy_redirect4(get_ct_map4(tuple),
+									 tuple),
+						   0);
 		}
 	}
 
