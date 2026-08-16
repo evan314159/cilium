@@ -757,7 +757,8 @@ ipv6_forward_to_destination(struct __ctx_buff *ctx, struct ipv6hdr *ip6,
 			/* If the packet is from L7 LB it is coming from the host */
 			return ipv6_local_delivery(ctx, ETH_HLEN, SECLABEL_IPV6,
 						   MARK_MAGIC_IDENTITY, ep,
-						   METRIC_EGRESS, from_l7lb, false);
+						   METRIC_EGRESS, from_l7lb, false,
+						   ct_state->proxy_redirect);
 		}
 	}
 
@@ -1233,7 +1234,7 @@ ipv4_forward_to_destination(struct __ctx_buff *ctx, struct iphdr *ip4,
 		if (ct_status == CT_REPLY && hairpin_flow)
 			daddr = ip4->saddr;
 
-		/* Lookup IPv4 address, this will return a match if:
+		/* Lookup IPv4 address, ct_state->proxy_redirect, this will return a match if:
 		 *  - The destination IP address belongs to a local endpoint
 		 *    managed by cilium
 		 *  - The destination IP address is an IP address associated with the
@@ -1258,7 +1259,7 @@ ipv4_forward_to_destination(struct __ctx_buff *ctx, struct iphdr *ip4,
 			return ipv4_local_delivery(ctx, ETH_HLEN, SECLABEL_IPV4,
 						   MARK_MAGIC_IDENTITY, ip4,
 						   ep, METRIC_EGRESS, from_l7lb,
-						   false, 0);
+						   false, ct_state->proxy_redirect, 0);
 		}
 	}
 

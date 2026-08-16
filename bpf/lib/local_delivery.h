@@ -139,7 +139,7 @@ local_delivery_fill_meta(struct __ctx_buff *ctx, __u32 seclabel,
 static __always_inline int
 local_delivery(struct __ctx_buff *ctx, __u32 seclabel, __u32 magic,
 	       const struct endpoint_info *ep, __u8 direction, bool from_host,
-	       bool from_tunnel, __u32 cluster_id)
+	       bool from_tunnel, bool to_proxy, __u32 cluster_id)
 {
 	bool use_redirect_peer;
 
@@ -173,21 +173,18 @@ local_delivery(struct __ctx_buff *ctx, __u32 seclabel, __u32 magic,
 	 * have cil_to_container attached, so it enforces there and we must not
 	 * also tail-call - that would evaluate ingress twice.
 	 *
-	 * The tail-call passes skb->tc_index through, so a packet returning from
-	 * a proxy still carries TC_INDEX_F_FROM_{IN,E}GRESS_PROXY when the
-	 * destination's policy program checks whether to redirect it to the
-	 * proxy again. A redirect() does not: cil_to_container rebuilds tc_index
-	 * from the mark in inherit_identity_from_host(). Carry the proxy origin
-	 * in the mark, as bpf_host already does for the same reason, or the
-	 * reply is sent back to the proxy and the connection hangs.
+	 * A stream that is proxy-redirected must keep the tail-call. Its reply
+	 * has to reach the proxy's socket, which is bound to the client pod's
+	 * address in the host netns, so ipv{4,6}_policy() hands it to the stack
+	 * via ctx_redirect_to_proxy(). Delivering it into the pod with a plain
+	 * redirect() instead skips that, the proxy never sees the answer to the
+	 * query it forwarded, and the lookup times out:
+	 *
+	 *   Timeout waiting for response to forwarded proxied DNS lookup
+	 *   ... read udp [pod]:55842->[coredns]:53: i/o timeout
 	 */
 	use_redirect_peer = should_redirect_peer(ctx, from_host);
-	if (CONFIG(enable_endpoint_routes) && !use_redirect_peer) {
-		if (tc_index_from_ingress_proxy(ctx))
-			magic = MARK_MAGIC_PROXY_INGRESS;
-		else if (tc_index_from_egress_proxy(ctx))
-			magic = MARK_MAGIC_PROXY_EGRESS;
-
+	if (CONFIG(enable_endpoint_routes) && !use_redirect_peer && !to_proxy) {
 		set_identity_mark(ctx, seclabel, magic);
 
 # if !defined(ENABLE_NODEPORT)
@@ -222,7 +219,7 @@ static __always_inline int ipv6_local_delivery(struct __ctx_buff *ctx, int l3_of
 					       __u32 seclabel, __u32 magic,
 					       const struct endpoint_info *ep,
 					       __u8 direction, bool from_host,
-					       bool from_tunnel)
+					       bool from_tunnel, bool to_proxy)
 {
 	mac_t router_mac = ep->node_mac;
 	mac_t lxc_mac = ep->mac;
@@ -235,7 +232,7 @@ static __always_inline int ipv6_local_delivery(struct __ctx_buff *ctx, int l3_of
 		return ret;
 
 	return local_delivery(ctx, seclabel, magic, ep, direction, from_host,
-			      from_tunnel, 0);
+			      from_tunnel, to_proxy, 0);
 }
 
 /* Performs IPv4 L2/L3 handling and delivers the packet to the destination pod
@@ -248,7 +245,8 @@ static __always_inline int ipv4_local_delivery(struct __ctx_buff *ctx, int l3_of
 					       struct iphdr *ip4,
 					       const struct endpoint_info *ep,
 					       __u8 direction, bool from_host,
-					       bool from_tunnel, __u32 cluster_id)
+					       bool from_tunnel, bool to_proxy,
+					       __u32 cluster_id)
 {
 	mac_t router_mac = ep->node_mac;
 	mac_t lxc_mac = ep->mac;
@@ -261,7 +259,7 @@ static __always_inline int ipv4_local_delivery(struct __ctx_buff *ctx, int l3_of
 		return ret;
 
 	return local_delivery(ctx, seclabel, magic, ep, direction, from_host,
-			      from_tunnel, cluster_id);
+			      from_tunnel, to_proxy, cluster_id);
 }
 
 /* Performs IPv6 L2/L3 handling and delivers the packet to the cilium_host@ingress
