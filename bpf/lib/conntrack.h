@@ -1241,6 +1241,25 @@ ct_has_egress_entry4(const void *map, struct ipv4_ct_tuple *tuple)
 	return entry;
 }
 
+/* The flag lives on the egress entry. Clear only the direction bit, as
+ * TUPLE_F_RELATED and TUPLE_F_SERVICE are also part of the key.
+ */
+static __always_inline bool
+ct_is_proxy_redirect4(const void *map, struct ipv4_ct_tuple *tuple)
+{
+	__u8 flags = tuple->flags;
+	const struct ct_entry *entry;
+	bool proxy_redirect = false;
+
+	tuple->flags &= ~TUPLE_F_IN;
+	entry = map_lookup_elem(map, tuple);
+	if (entry)
+		proxy_redirect = entry->proxy_redirect;
+	tuple->flags = flags;
+
+	return proxy_redirect;
+}
+
 static __always_inline bool
 ct_has_egress_entry6(const void *map, struct ipv6_ct_tuple *tuple)
 {
@@ -1252,6 +1271,23 @@ ct_has_egress_entry6(const void *map, struct ipv6_ct_tuple *tuple)
 	tuple->flags = flags;
 
 	return entry;
+}
+
+/* See ct_is_proxy_redirect4(). */
+static __always_inline bool
+ct_is_proxy_redirect6(const void *map, struct ipv6_ct_tuple *tuple)
+{
+	__u8 flags = tuple->flags;
+	const struct ct_entry *entry;
+	bool proxy_redirect = false;
+
+	tuple->flags &= ~TUPLE_F_IN;
+	entry = map_lookup_elem(map, tuple);
+	if (entry)
+		proxy_redirect = entry->proxy_redirect;
+	tuple->flags = flags;
+
+	return proxy_redirect;
 }
 
 static __always_inline bool
