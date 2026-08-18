@@ -2131,9 +2131,15 @@ int tail_ipv6_to_endpoint(struct __ctx_buff *ctx)
 
 	ret = ipv6_policy(ctx, ip6, src_sec_identity, NULL, &ext_err,
 			  &proxy_port, false);
+	/* PROBE ONLY: what did the to-endpoint chain's policy pass decide? */
+	cilium_dbg(ctx, DBG_GENERIC, 0xBEEF0020, (__u32)ret);
 	switch (ret) {
 	case POLICY_ACT_PROXY_REDIRECT:
+		/* PROBE ONLY: reached the hairpin, with which proxy port? */
+		cilium_dbg(ctx, DBG_GENERIC, 0xBEEF0021, (__u32)proxy_port);
 		ret = ctx_redirect_to_proxy_hairpin_ipv6(ctx, proxy_port);
+		/* PROBE ONLY: hairpin return (TC_ACT_REDIRECT=7 means accepted) */
+		cilium_dbg(ctx, DBG_GENERIC, 0xBEEF0022, (__u32)ret);
 		ctx->mark = ctx_load_meta(ctx, CB_PROXY_MAGIC);
 		break;
 	case CTX_ACT_OK:
@@ -2458,6 +2464,8 @@ int tail_ipv4_to_endpoint(struct __ctx_buff *ctx)
 
 	ret = ipv4_policy(ctx, ip4, src_sec_identity, NULL, &ext_err,
 			  &proxy_port, false);
+	/* PROBE ONLY: what did the to-endpoint chain's policy pass decide? */
+	cilium_dbg(ctx, DBG_GENERIC, 0xBEEF0010, (__u32)ret);
 	switch (ret) {
 	case POLICY_ACT_PROXY_REDIRECT:
 		if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
@@ -2465,7 +2473,11 @@ int tail_ipv4_to_endpoint(struct __ctx_buff *ctx)
 			goto out;
 		}
 
+		/* PROBE ONLY: reached the hairpin, with which proxy port? */
+		cilium_dbg(ctx, DBG_GENERIC, 0xBEEF0011, (__u32)proxy_port);
 		ret = ctx_redirect_to_proxy_hairpin_ipv4(ctx, ip4, proxy_port);
+		/* PROBE ONLY: hairpin return (TC_ACT_REDIRECT=7 means accepted) */
+		cilium_dbg(ctx, DBG_GENERIC, 0xBEEF0012, (__u32)ret);
 		ctx->mark = ctx_load_meta(ctx, CB_PROXY_MAGIC);
 		break;
 	case CTX_ACT_OK:
