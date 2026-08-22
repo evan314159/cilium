@@ -1,7 +1,7 @@
 name: Fork Build to GHCR
 
-# Builds agent and operator images from this fork and pushes them to GHCR so a
-# patched datapath can be deployed to a test cluster. Not for upstream.
+# Builds agent, operator and hubble-relay images from this fork and pushes them
+# to GHCR so a patched build can be deployed to a test cluster. Not for upstream.
 
 on:
   workflow_dispatch: {}
@@ -33,6 +33,10 @@ jobs:
             dockerfile: images/operator/Dockerfile
             image: operator-generic
             build-args: "OPERATOR_VARIANT=operator-generic"
+          - name: hubble-relay
+            dockerfile: images/hubble-relay/Dockerfile
+            image: hubble-relay
+            build-args: ""
     steps:
       - name: Checkout
         uses: actions/checkout@v4
