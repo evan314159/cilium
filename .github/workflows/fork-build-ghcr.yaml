@@ -1,6 +1,6 @@
 name: Fork Build to GHCR
 
-# Builds agent and operator images from this fork and pushes them to GHCR so a
+# Builds the agent image from this fork and pushes them to GHCR so a
 # patched build can be deployed to a test cluster. Not for upstream.
 
 on:
@@ -29,10 +29,6 @@ jobs:
             dockerfile: images/cilium/Dockerfile
             image: cilium
             build-args: ""
-          - name: operator
-            dockerfile: images/operator/Dockerfile
-            image: operator-generic
-            build-args: "OPERATOR_VARIANT=operator-generic"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,7 +48,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GHCR_TOKEN }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
