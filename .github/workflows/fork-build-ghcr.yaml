@@ -1,13 +1,13 @@
 name: Fork Build to GHCR
 
 # Builds agent and operator images from this fork and pushes them to GHCR so a
-# patched datapath can be deployed to a test cluster. Not for upstream.
+# patched build can be deployed to a test cluster. Not for upstream.
 
 on:
   workflow_dispatch: {}
   push:
     branches:
-      - fix/combined
+      - hubble-zombie-names-ci
 
 permissions:
   contents: read
@@ -37,6 +37,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # An immutable tag, so that GitOps sees a change on every rebuild.
+      - name: Compute image tag
+        id: tag
+        run: echo "tag=zombie-names-${GITHUB_SHA::10}" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -60,6 +65,6 @@ jobs:
           build-args: ${{ matrix.build-args }}
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:combined
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ steps.tag.outputs.tag }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
