@@ -34,6 +34,13 @@ func attachSKBProgram(logger *slog.Logger, device netlink.Link, prog *ebpf.Progr
 		// supported, therefore use netkit instead of tcx. For all others like
 		// host devices, rely on tcx.
 		if device.Type() == "netkit" {
+			if parent == netlink.HANDLE_MIN_EGRESS {
+				// See upsertNetkitEgressProgram for why this uses tcx.
+				if err := upsertNetkitEgressProgram(logger, device, prog, progName, bpffsDir); err != nil {
+					return fmt.Errorf("attaching netkit egress program %s: %w", progName, err)
+				}
+				return nil
+			}
 			if err := upsertNetkitProgram(logger, device, prog, progName, bpffsDir, parent); err != nil {
 				return fmt.Errorf("attaching netkit program %s: %w", progName, err)
 			}

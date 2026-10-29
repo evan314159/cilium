@@ -28,12 +28,9 @@ func parentToNetkitType(parent uint32) ebpf.AttachType {
 	// peer device inside the Pod.
 	case netlink.HANDLE_MIN_INGRESS:
 		return ebpf.AttachNetkitPeer
-	// tc egress on a veth host device of a Pod is the logical ingress
-	// direction. Thus this must get attached to the xmit of the netkit
-	// primary device in the host namespace.
-	case netlink.HANDLE_MIN_EGRESS:
-		return ebpf.AttachNetkitPrimary
 	}
+	// Programs for tc egress are attached to tcx egress of the primary device
+	// instead, see upsertNetkitEgressProgram.
 	panic(fmt.Sprintf("invalid tc direction: %d", parent))
 }
 
@@ -51,6 +48,76 @@ func upsertNetkitProgram(logger *slog.Logger, device netlink.Link, prog *ebpf.Pr
 	}
 
 	return attachNetkit(logger, device, prog, progName, bpffsDir, parentToNetkitType(parent))
+}
+
+// upsertNetkitEgressProgram attaches prog to tcx egress of a netkit primary
+// device, or updates the existing attachment. The primary device is the Pod's
+// device in the host network namespace. prog processes packets that the host
+// sends towards the Pod. With veth, it is attached to tc egress of the Pod's
+// device in the host network namespace.
+//
+// prog is not attached to netkit's own hook for the primary device. netkit runs
+// the programs on that hook from netkit_xmit(), after it has set skb->dev to
+// the peer device, which is in the Pod's network namespace. bpf_redirect() then
+// looks up the target device in the Pod's network namespace, so prog cannot
+// redirect packets to cilium_net for the L7 proxy. tcx egress runs prog before
+// netkit_xmit(), when skb->dev is still the primary device in the host network
+// namespace.
+//
+// Earlier versions of Cilium attached prog to netkit's own hook. Such a link is
+// replaced with a tcx link. The tcx link is attached before the netkit link is
+// removed, so that no packet reaches the Pod without prog running. Until the
+// netkit link is removed, prog runs twice for each packet towards the Pod.
+func upsertNetkitEgressProgram(logger *slog.Logger, device netlink.Link, prog *ebpf.Program, progName, bpffsDir string) error {
+	pin := filepath.Join(bpffsDir, progName)
+	old, err := link.LoadPinnedLink(pin, &ebpf.LoadPinOptions{})
+	if errors.Is(err, os.ErrNotExist) {
+		return attachTCX(logger, device, prog, progName, bpffsDir, ebpf.AttachTCXEgress)
+	}
+	if err != nil {
+		return fmt.Errorf("opening pinned link %s: %w", pin, err)
+	}
+	// Once old is unpinned, closing it removes the link.
+	defer old.Close()
+
+	info, err := old.Info()
+	if err != nil {
+		return fmt.Errorf("retrieving info of link %s: %w", pin, err)
+	}
+	if info.Type != link.NetkitType {
+		return upsertTCXProgram(logger, device, prog, progName, bpffsDir, netlink.HANDLE_MIN_EGRESS)
+	}
+
+	l, err := link.AttachTCX(link.TCXOptions{
+		Program:   prog,
+		Attach:    ebpf.AttachTCXEgress,
+		Interface: device.Attrs().Index,
+		Anchor:    link.Tail(),
+	})
+	if err != nil {
+		return fmt.Errorf("attaching tcx: %w", err)
+	}
+	defer l.Close()
+
+	// Unpinning old does not remove it while it is still open. If pinning the
+	// tcx link fails, pin old again. Closing l then removes the tcx link.
+	if err := old.Unpin(); err != nil {
+		return fmt.Errorf("unpinning netkit link %s: %w", pin, err)
+	}
+	if err := l.Pin(pin); err != nil {
+		if rerr := old.Pin(pin); rerr != nil {
+			return fmt.Errorf("pinning link at %s for program %s: %w (restoring netkit link: %w)", pin, progName, err, rerr)
+		}
+		return fmt.Errorf("pinning link at %s for program %s: %w", pin, progName, err)
+	}
+
+	logger.Info(
+		"Replaced netkit link with tcx link for program",
+		logfields.ProgName, progName,
+		logfields.Device, device.Attrs().Name,
+	)
+
+	return nil
 }
 
 // attachNetkit attaches the tc BPF prog to the netkit device. It pins the
