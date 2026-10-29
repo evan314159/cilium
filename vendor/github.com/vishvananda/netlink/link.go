@@ -411,6 +411,18 @@ const (
 	NETKIT_SCRUB_DEFAULT NetkitScrub = 1
 )
 
+// NetkitBPFCtx is the context that the programs of a netkit primary device
+// run in.
+type NetkitBPFCtx int
+
+const (
+	// NETKIT_BPF_CTX_RX runs them with skb->dev set to the peer device.
+	NETKIT_BPF_CTX_RX NetkitBPFCtx = 0
+	// NETKIT_BPF_CTX_PRIMARY runs them with skb->dev set to the primary
+	// device.
+	NETKIT_BPF_CTX_PRIMARY NetkitBPFCtx = 1
+)
+
 func (n *Netkit) IsPrimary() bool {
 	return n.isPrimary
 }
@@ -427,9 +439,11 @@ type Netkit struct {
 	PeerPolicy      NetkitPolicy
 	Scrub           NetkitScrub
 	PeerScrub       NetkitScrub
-	DesiredHeadroom uint16 // Named due to presence of Headroom in LinkAttrs
-	DesiredTailroom uint16 // Named due to presence of Tailroom in LinkAttrs
+	DesiredHeadroom uint16       // Named due to presence of Headroom in LinkAttrs
+	DesiredTailroom uint16       // Named due to presence of Tailroom in LinkAttrs
+	BPFCtx          NetkitBPFCtx // Set at creation only
 	supportsScrub   bool
+	supportsBPFCtx  bool
 	isPrimary       bool
 	peerLinkAttrs   LinkAttrs
 }
@@ -444,6 +458,12 @@ func (n *Netkit) Type() string {
 
 func (n *Netkit) SupportsScrub() bool {
 	return n.supportsScrub
+}
+
+// SupportsBPFCtx reports whether the kernel reported the BPF context of the
+// device, which kernels supporting IFLA_NETKIT_BPF_CTX do for paired devices.
+func (n *Netkit) SupportsBPFCtx() bool {
+	return n.supportsBPFCtx
 }
 
 // Veth devices must specify PeerName on create

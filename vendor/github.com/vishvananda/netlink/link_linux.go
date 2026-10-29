@@ -2911,6 +2911,12 @@ func addNetkitAttrs(nk *Netkit, linkInfo *nl.RtAttr, flag int) error {
 		return nil
 	}
 
+	// The BPF context can only be set at creation. Kernels without support
+	// ignore the attribute, see SupportsBPFCtx.
+	if nk.BPFCtx != NETKIT_BPF_CTX_RX {
+		data.AddRtAttr(nl.IFLA_NETKIT_BPF_CTX, nl.Uint32Attr(uint32(nk.BPFCtx)))
+	}
+
 	peer := data.AddRtAttr(nl.IFLA_NETKIT_PEER_INFO, nil)
 	msg := nl.NewIfInfomsg(unix.AF_UNSPEC)
 	if nk.peerLinkAttrs.Flags&net.FlagUp != 0 {
@@ -2984,6 +2990,9 @@ func parseNetkitData(link Link, data []syscall.NetlinkRouteAttr) {
 			netkit.DesiredHeadroom = native.Uint16(datum.Value[0:2])
 		case nl.IFLA_NETKIT_TAILROOM:
 			netkit.DesiredTailroom = native.Uint16(datum.Value[0:2])
+		case nl.IFLA_NETKIT_BPF_CTX:
+			netkit.supportsBPFCtx = true
+			netkit.BPFCtx = NetkitBPFCtx(native.Uint32(datum.Value[0:4]))
 		}
 	}
 }
