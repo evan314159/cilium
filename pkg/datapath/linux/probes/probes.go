@@ -24,6 +24,7 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 
+	"github.com/cilium/cilium/pkg/byteorder"
 	bpfgen "github.com/cilium/cilium/pkg/datapath/bpf"
 	bigtcp "github.com/cilium/cilium/pkg/datapath/linux/bigtcp/types"
 	"github.com/cilium/cilium/pkg/datapath/linux/safenetlink"
@@ -435,6 +436,159 @@ var HaveNetkitTunableBufferMargins = sync.OnceValue(func() error {
 		}
 
 		return nil
+	})
+})
+
+// HaveNetkitSKAssign returns nil if the running kernel allows
+// bpf_sk_assign() from programs on netkit devices, which BPF TPROXY needs.
+//
+// Programs on the hook of a netkit peer device run when the Pod sends a
+// packet, before netkit hands it to the receive path of the primary device.
+// Kernels without support allow bpf_sk_assign() only at tc ingress and
+// return -EOPNOTSUPP there. The probe sends one packet through a netkit pair
+// in a new network namespace, and its program assigns it to a UDP socket in
+// that namespace and records what bpf_sk_assign() returned.
+var HaveNetkitSKAssign = sync.OnceValue(func() error {
+	ns, err := netns.New()
+	if err != nil {
+		return fmt.Errorf("create netns: %w", err)
+	}
+	defer ns.Close()
+
+	return ns.Do(func() error {
+		hostIfName := "tmpnksk0"
+		peerIfName := "tmpnksk1"
+
+		conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
+		if err != nil {
+			return fmt.Errorf("create socket: %w", err)
+		}
+		defer conn.Close()
+		port := uint16(conn.LocalAddr().(*net.UDPAddr).Port)
+
+		result, err := ebpf.NewMap(&ebpf.MapSpec{
+			Type:       ebpf.Array,
+			KeySize:    4,
+			ValueSize:  8,
+			MaxEntries: 1,
+		})
+		if err != nil {
+			return fmt.Errorf("create map: %w", err)
+		}
+		defer result.Close()
+		// Overwritten with the return value of bpf_sk_assign().
+		const notRun = int64(1)
+		if err := result.Put(uint32(0), notRun); err != nil {
+			return fmt.Errorf("initialize map: %w", err)
+		}
+
+		prog, err := ebpf.NewProgram(&ebpf.ProgramSpec{
+			Type:    ebpf.SchedCLS,
+			License: "Apache-2.0",
+			Instructions: asm.Instructions{
+				asm.Mov.Reg(asm.R6, asm.R1),
+				// struct bpf_sock_tuple, ipv4: any address, dport = port
+				asm.StoreImm(asm.RFP, -16, 0, asm.Word),
+				asm.StoreImm(asm.RFP, -12, 0, asm.Word),
+				asm.StoreImm(asm.RFP, -8, 0, asm.Half),
+				asm.StoreImm(asm.RFP, -6, int64(byteorder.HostToNetwork16(port)), asm.Half),
+				asm.Mov.Reg(asm.R2, asm.RFP),
+				asm.Add.Imm(asm.R2, -16),
+				asm.Mov.Imm(asm.R3, 12),
+				asm.Mov.Imm(asm.R4, -1), // BPF_F_CURRENT_NETNS
+				asm.Mov.Imm(asm.R5, 0),
+				asm.FnSkLookupUdp.Call(),
+				asm.JEq.Imm(asm.R0, 0, "drop"),
+				asm.Mov.Reg(asm.R7, asm.R0),
+				asm.Mov.Reg(asm.R1, asm.R6),
+				asm.Mov.Reg(asm.R2, asm.R7),
+				asm.Mov.Imm(asm.R3, 0),
+				asm.FnSkAssign.Call(),
+				asm.StoreMem(asm.RFP, -24, asm.R0, asm.DWord),
+				asm.Mov.Reg(asm.R1, asm.R7),
+				asm.FnSkRelease.Call(),
+				asm.StoreImm(asm.RFP, -28, 0, asm.Word),
+				asm.LoadMapPtr(asm.R1, result.FD()),
+				asm.Mov.Reg(asm.R2, asm.RFP),
+				asm.Add.Imm(asm.R2, -28),
+				asm.Mov.Reg(asm.R3, asm.RFP),
+				asm.Add.Imm(asm.R3, -24),
+				asm.Mov.Imm(asm.R4, 0),
+				asm.FnMapUpdateElem.Call(),
+				asm.Mov.Imm(asm.R0, 2).WithSymbol("drop"), // NETKIT_DROP
+				asm.Return(),
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("loading bpf program: %w", err)
+		}
+		defer prog.Close()
+
+		netkit := &netlink.Netkit{
+			LinkAttrs:  netlink.LinkAttrs{Name: hostIfName},
+			Mode:       netlink.NETKIT_MODE_L2,
+			Policy:     netlink.NETKIT_POLICY_FORWARD,
+			PeerPolicy: netlink.NETKIT_POLICY_FORWARD,
+		}
+		netkit.SetPeerAttrs(&netlink.LinkAttrs{Name: peerIfName})
+		if err := netlink.LinkAdd(netkit); err != nil {
+			return fmt.Errorf("create link: %w", err)
+		}
+		defer netlink.LinkDel(netkit)
+		hostLink, err := safenetlink.LinkByName(hostIfName)
+		if err != nil {
+			return fmt.Errorf("query link: %w", err)
+		}
+		peerLink, err := safenetlink.LinkByName(peerIfName)
+		if err != nil {
+			return fmt.Errorf("query link: %w", err)
+		}
+		for _, l := range []netlink.Link{hostLink, peerLink} {
+			if err := netlink.LinkSetUp(l); err != nil {
+				return fmt.Errorf("set link up: %w", err)
+			}
+		}
+
+		l, err := link.AttachNetkit(link.NetkitOptions{
+			Program:   prog,
+			Attach:    ebpf.AttachNetkitPeer,
+			Interface: hostLink.Attrs().Index,
+		})
+		if err != nil {
+			return fmt.Errorf("attach program: %w", err)
+		}
+		defer l.Close()
+
+		// The program runs synchronously when the peer device transmits.
+		// It drops the packet, so sending it fails with ENOBUFS.
+		fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, 0)
+		if err != nil {
+			return fmt.Errorf("create packet socket: %w", err)
+		}
+		defer unix.Close(fd)
+		frame := make([]byte, 64)
+		err = unix.Sendto(fd, frame, 0, &unix.SockaddrLinklayer{
+			Protocol: byteorder.HostToNetwork16(unix.ETH_P_IP),
+			Ifindex:  peerLink.Attrs().Index,
+		})
+		if err != nil && !errors.Is(err, unix.ENOBUFS) {
+			return fmt.Errorf("send packet: %w", err)
+		}
+
+		var ret int64
+		if err := result.Lookup(uint32(0), &ret); err != nil {
+			return fmt.Errorf("read map: %w", err)
+		}
+		switch ret {
+		case 0:
+			return nil
+		case notRun:
+			return errors.New("probe program did not run")
+		case -int64(unix.EOPNOTSUPP):
+			return fmt.Errorf("bpf_sk_assign() from netkit programs: %w", ErrNotSupported)
+		default:
+			return fmt.Errorf("bpf_sk_assign() from netkit programs returned %d", ret)
+		}
 	})
 })
 

@@ -118,6 +118,17 @@ func TestPrivilegedHaveNetkitTunableBufferMargins(t *testing.T) {
 	assert.NoError(t, HaveNetkitTunableBufferMargins())
 }
 
+func TestPrivilegedHaveNetkitSKAssign(t *testing.T) {
+	testutils.PrivilegedTest(t)
+	testutils.SkipOnOldKernel(t, "6.7", "netkit bpf_link")
+	// No released kernel has support yet, so only check that the probe
+	// itself works: it reports support or ErrNotSupported, not a failure
+	// to run.
+	if err := HaveNetkitSKAssign(); err != nil {
+		assert.ErrorIs(t, err, ErrNotSupported)
+	}
+}
+
 func TestPrivilegedHaveFibLookupSkipNeigh(t *testing.T) {
 	testutils.PrivilegedTest(t)
 	testutils.SkipOnOldKernel(t, "6.6", "BPF_FIB_LOOKUP_SKIP_NEIGH")

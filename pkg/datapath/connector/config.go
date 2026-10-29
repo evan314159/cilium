@@ -165,16 +165,17 @@ func canUseNetkit(p connectorParams) error {
 		}
 	}
 
-	// bpf.tproxy requires use of bpf_sk_assign() helper, which at the time of
-	// writing can only be called from TC ingress. However, netkit programs
-	// run at TC egress, so the helper returns -ENOTSUPP and tproxy cannot
-	// assign skbs to proxy listener sockets.
-	//
-	// Until this is resolved we don't tolerate tproxy and netkit.
+	// bpf.tproxy assigns packets to the proxy's sockets with bpf_sk_assign().
+	// cil_from_container runs on the netkit peer device's hook, where older
+	// kernels return -EOPNOTSUPP from the helper, as they only allow it at
+	// tc ingress.
 	//
 	// GH issue: https://github.com/cilium/cilium/issues/39892
 	if p.DaemonConfig.EnableBPFTProxy {
-		return fmt.Errorf("netkit devices cannot be used with --%s=true", option.EnableBPFTProxy)
+		if err := probes.HaveNetkitSKAssign(); err != nil {
+			return fmt.Errorf("netkit devices cannot be used with --%s=true: %w",
+				option.EnableBPFTProxy, err)
+		}
 	}
 
 	return nil

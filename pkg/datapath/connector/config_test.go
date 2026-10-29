@@ -206,6 +206,11 @@ func hostSupportsNetkitScrub() bool {
 	return err == nil
 }
 
+func hostSupportsNetkitSKAssign() bool {
+	err := probes.HaveNetkitSKAssign()
+	return err == nil
+}
+
 func hostSupportsNetkitTunedBufferMargins() bool {
 	err := probes.HaveNetkitTunableBufferMargins()
 	return err == nil
@@ -270,7 +275,7 @@ func TestNewConfig(t *testing.T) {
 			wgAgent:        fakewireguard.NewTestAgent(wgConfigDisabled),
 			tunnelConfig:   tunnelConfigNative,
 			expectedConfig: &connectorConfigNetkit,
-			shouldError:    true,
+			shouldError:    !hostSupportsNetkitSKAssign(),
 			shouldSkip:     false,
 		},
 		{
@@ -338,7 +343,7 @@ func TestNewConfig(t *testing.T) {
 			wgAgent:        fakewireguard.NewTestAgent(wgConfigDisabled),
 			tunnelConfig:   tunnelConfigNative,
 			expectedConfig: &connectorConfigNetkitL2,
-			shouldError:    true,
+			shouldError:    !hostSupportsNetkitSKAssign(),
 			shouldSkip:     false,
 		},
 		{
@@ -444,7 +449,16 @@ func TestNewConfig(t *testing.T) {
 			tunnelConfig:   tunnelConfigNative,
 			expectedConfig: &connectorConfigAuto_Veth,
 			shouldError:    false,
-			shouldSkip:     !hostSupportsNetkit(),
+			shouldSkip:     !hostSupportsNetkit() || hostSupportsNetkitSKAssign(),
+		},
+		{
+			name:           "datapath-auto(netkit)+tproxy+oper-netkit",
+			daemonConfig:   &daemonConfigAutoTproxy,
+			wgAgent:        fakewireguard.NewTestAgent(wgConfigDisabled),
+			tunnelConfig:   tunnelConfigNative,
+			expectedConfig: &connectorConfigAuto_Netkit,
+			shouldError:    false,
+			shouldSkip:     !hostSupportsNetkitSKAssign(),
 		},
 		{
 			name:           "datapath-auto(netkit)+host-legacy-routing+oper-veth",
