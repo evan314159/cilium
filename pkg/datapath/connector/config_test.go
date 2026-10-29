@@ -315,14 +315,12 @@ func TestNewConfig(t *testing.T) {
 			shouldSkip:     false,
 		},
 		{
-			// Refused regardless of scrub support: cil_to_container cannot
-			// reach the L7 proxy from the Pod's netns.
 			name:           "datapath-netkit+endpoint-routes+l7-proxy",
 			daemonConfig:   &daemonConfigNetkitEndpointRoutesL7,
 			wgAgent:        fakewireguard.NewTestAgent(wgConfigDisabled),
 			tunnelConfig:   tunnelConfigNative,
 			expectedConfig: &connectorConfigNetkit,
-			shouldError:    true,
+			shouldError:    !hostSupportsNetkitScrub(),
 			shouldSkip:     false,
 		},
 		{
