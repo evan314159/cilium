@@ -206,6 +206,11 @@ func hostSupportsNetkitScrub() bool {
 	return err == nil
 }
 
+func hostSupportsNetkitBPFCtx() bool {
+	err := probes.HaveNetkitBPFCtx()
+	return err == nil
+}
+
 func hostSupportsNetkitTunedBufferMargins() bool {
 	err := probes.HaveNetkitTunableBufferMargins()
 	return err == nil
@@ -315,14 +320,14 @@ func TestNewConfig(t *testing.T) {
 			shouldSkip:     false,
 		},
 		{
-			// Refused regardless of scrub support: cil_to_container cannot
-			// reach the L7 proxy from the Pod's netns.
+			// cil_to_container can only reach the L7 proxy with the
+			// primary BPF context.
 			name:           "datapath-netkit+endpoint-routes+l7-proxy",
 			daemonConfig:   &daemonConfigNetkitEndpointRoutesL7,
 			wgAgent:        fakewireguard.NewTestAgent(wgConfigDisabled),
 			tunnelConfig:   tunnelConfigNative,
 			expectedConfig: &connectorConfigNetkit,
-			shouldError:    true,
+			shouldError:    !hostSupportsNetkitScrub() || !hostSupportsNetkitBPFCtx(),
 			shouldSkip:     false,
 		},
 		{

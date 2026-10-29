@@ -178,16 +178,18 @@ func canUseNetkit(p connectorParams) error {
 	}
 
 	// With per-endpoint routes, cil_to_container enforces ingress policy for
-	// pod-to-pod traffic, and it cannot reach the L7 proxy: netkit_xmit()
-	// reassigns skb->dev to the peer before running BPF, so skb_do_redirect()
-	// resolves cilium_net's ifindex in the Pod's netns, where it does not
-	// exist, and frees the skb. Punting to the stack lands in the same netns,
-	// where the TPROXY rules are absent.
-	//
-	// Refuse rather than drop L7 replies silently.
+	// traffic towards the Pod, and redirects it to cilium_net when it needs
+	// the L7 proxy. netkit normally runs the programs of the primary device
+	// with skb->dev already set to the peer device, in the Pod's network
+	// namespace, where cilium_net's ifindex does not resolve, so the redirect
+	// fails. Netkit devices are therefore created with NETKIT_BPF_CTX_PRIMARY,
+	// see setupNetkitPair. Where the kernel does not support it, refuse rather
+	// than drop L7 traffic.
 	if p.DaemonConfig.EnableEndpointRoutes && p.DaemonConfig.EnableL7Proxy {
-		return fmt.Errorf("netkit devices cannot be used with --%s=true and --%s=true",
-			option.EnableEndpointRoutes, option.EnableL7Proxy)
+		if err := probes.HaveNetkitBPFCtx(); err != nil {
+			return fmt.Errorf("netkit devices cannot be used with --%s=true and --%s=true: %w",
+				option.EnableEndpointRoutes, option.EnableL7Proxy, err)
+		}
 	}
 
 	return nil

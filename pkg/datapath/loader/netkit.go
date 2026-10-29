@@ -18,7 +18,9 @@ import (
 	"github.com/vishvananda/netlink"
 
 	"github.com/cilium/cilium/pkg/bpf"
+	endpoint "github.com/cilium/cilium/pkg/endpoint/types"
 	"github.com/cilium/cilium/pkg/logging/logfields"
+	"github.com/cilium/cilium/pkg/option"
 )
 
 func parentToNetkitType(parent uint32) ebpf.AttachType {
@@ -187,4 +189,24 @@ func hasCiliumNetkitLinks(device netlink.Link, attach ebpf.AttachType) (bool, er
 	}
 
 	return false, nil
+}
+
+// checkNetkitBPFCtx returns an error if cil_to_container of ep would need to
+// redirect packets to the L7 proxy, but iface is a netkit primary device that
+// runs it in the Pod's network namespace. The redirect would then fail.
+//
+// Devices are created with NETKIT_BPF_CTX_PRIMARY where the kernel supports
+// it, and the agent refuses netkit with endpoint routes and the L7 proxy
+// where it does not. Devices created by earlier versions of Cilium lack it,
+// and the Pod must be recreated for it to take effect.
+func checkNetkitBPFCtx(ep endpoint.Config, iface netlink.Link) error {
+	nk, ok := iface.(*netlink.Netkit)
+	if !ok || !ep.RequireEgressProg() || !option.Config.EnableL7Proxy {
+		return nil
+	}
+	if nk.BPFCtx != netlink.NETKIT_BPF_CTX_PRIMARY {
+		return fmt.Errorf("netkit device %s was created without NETKIT_BPF_CTX_PRIMARY, which the L7 proxy needs with endpoint routes; recreate the Pod",
+			iface.Attrs().Name)
+	}
+	return nil
 }

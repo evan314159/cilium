@@ -438,6 +438,57 @@ var HaveNetkitTunableBufferMargins = sync.OnceValue(func() error {
 	})
 })
 
+// HaveNetkitBPFCtx returns nil if the running kernel supports creating netkit
+// devices with IFLA_NETKIT_BPF_CTX set to NETKIT_BPF_CTX_PRIMARY. With it,
+// the programs of the primary device run with skb->dev set to the primary
+// device, in the host network namespace, rather than to the peer device in
+// the Pod's network namespace.
+//
+// Kernels without support ignore the attribute when creating the device, so
+// the probe checks that the kernel reports it back.
+var HaveNetkitBPFCtx = sync.OnceValue(func() error {
+	ns, err := netns.New()
+	if err != nil {
+		return fmt.Errorf("create netns: %w", err)
+	}
+	defer ns.Close()
+
+	return ns.Do(func() error {
+		hostIfName := "tmpnkctx0"
+		peerIfName := "tmpnkctx1"
+
+		netkit := &netlink.Netkit{
+			LinkAttrs:  netlink.LinkAttrs{Name: hostIfName},
+			Mode:       netlink.NETKIT_MODE_L3,
+			Policy:     netlink.NETKIT_POLICY_FORWARD,
+			PeerPolicy: netlink.NETKIT_POLICY_BLACKHOLE,
+			BPFCtx:     netlink.NETKIT_BPF_CTX_PRIMARY,
+		}
+		netkit.SetPeerAttrs(&netlink.LinkAttrs{Name: peerIfName})
+		if err := netlink.LinkAdd(netkit); err != nil {
+			return fmt.Errorf("create link: %w", err)
+		}
+		hostLink, err := safenetlink.LinkByName(hostIfName)
+		if err != nil {
+			return fmt.Errorf("query link: %w", err)
+		}
+		defer netlink.LinkDel(hostLink)
+
+		hostNetkit, ok := hostLink.(*netlink.Netkit)
+		if !ok || hostNetkit == nil {
+			return fmt.Errorf("expected link of type *netlink.Netkit")
+		}
+		if !hostNetkit.SupportsBPFCtx() {
+			return fmt.Errorf("netkit NETKIT_BPF_CTX_PRIMARY: %w", ErrNotSupported)
+		}
+		if hostNetkit.BPFCtx != netlink.NETKIT_BPF_CTX_PRIMARY {
+			return fmt.Errorf("netkit BPF context is %d after creating the device with %d",
+				hostNetkit.BPFCtx, netlink.NETKIT_BPF_CTX_PRIMARY)
+		}
+		return nil
+	})
+})
+
 // HaveSKBAdjustRoomL2RoomMACSupport tests whether the kernel supports the `bpf_skb_adjust_room` helper
 // with the `BPF_ADJ_ROOM_MAC` mode. To do so, we create a program that requests the passed in SKB
 // to be expanded by 20 bytes. The helper checks the `mode` argument and will return -ENOSUPP if

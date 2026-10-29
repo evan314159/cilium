@@ -65,6 +65,15 @@ func setupNetkitPair(defaultLogger *slog.Logger, cfg LinkConfig, l2Mode bool, sy
 		// tunneling and encryption.
 		DesiredHeadroom: uint16(cfg.DeviceHeadroom),
 		DesiredTailroom: uint16(cfg.DeviceTailroom),
+		// Run the programs of the primary device, cil_to_container, with
+		// skb->dev set to the primary device in the host network namespace,
+		// as on tc egress of the Pod's device with veth. Otherwise skb->dev
+		// is the peer device in the Pod's network namespace, and
+		// cil_to_container cannot redirect to cilium_net for the L7 proxy.
+		// Kernels without support ignore the attribute. This runs in the CNI
+		// plugin for every Pod, so it does not probe the kernel; the agent
+		// does, see canUseNetkit and checkNetkitBPFCtx.
+		BPFCtx: netlink.NETKIT_BPF_CTX_PRIMARY,
 	}
 	peerAttr := &netlink.LinkAttrs{
 		Name:         cfg.PeerIfName,

@@ -212,6 +212,15 @@ func reloadEndpoint(ctx context.Context, logger *slog.Logger, reg *registry.MapR
 	defer cleanup()
 	defer obj.Close()
 
+	device := ep.InterfaceName()
+	iface, err := safenetlink.LinkByName(device)
+	if err != nil {
+		return fmt.Errorf("retrieving device %s: %w", device, err)
+	}
+	if err := checkNetkitBPFCtx(ep, iface); err != nil {
+		return err
+	}
+
 	// Insert policy programs before attaching entrypoints to tc hooks.
 	// Inserting a policy program is considered an attachment, since it makes
 	// the code reachable by bpf_host when it evaluates policy for the endpoint.
@@ -224,12 +233,6 @@ func reloadEndpoint(ctx context.Context, logger *slog.Logger, reg *registry.MapR
 	}
 	if err := obj.EgressPolicyMap.Update(uint32(ep.GetID()), obj.EgressPolicyProg, ebpf.UpdateAny); err != nil {
 		return fmt.Errorf("inserting endpoint egress policy program: %w", err)
-	}
-
-	device := ep.InterfaceName()
-	iface, err := safenetlink.LinkByName(device)
-	if err != nil {
-		return fmt.Errorf("retrieving device %s: %w", device, err)
 	}
 
 	linkDir := bpffsEndpointLinksDir(bpf.CiliumPath(), ep)
